@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+artifacts/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+*.db
+*.db-shm
+*.db-wal

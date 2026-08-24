@@ -1,0 +1,16 @@
+# Architecture Decision Records
+
+- [0001 Technology stack](0001-technology-stack.md)
+- [0002 Official APIs only](0002-official-apis-only.md)
+- [0003 Account isolation](0003-account-isolation.md)
+- [0004 Paper first](0004-paper-first.md)
+- [0005 Immutable ledger](0005-immutable-ledger.md)
+- [0006 Risk authority and hard limits](0006-risk-authority.md)
+- [0007 Kill switch semantics](0007-kill-switch.md)
+- [0008 Pause and resume](0008-pause-resume.md)
+- [0009 AI separation](0009-ai-separation.md)
+- [0010 Tax ledger](0010-tax-ledger.md)
+- [0011 Tax reserve](0011-tax-reserve.md)
+- [0012 Withdrawal architecture](0012-withdrawal-architecture.md)
+- [0013 Manual operation reconciliation](0013-manual-reconciliation.md)
+- [0014 Frontend and live gating](0014-frontend-live-gating.md)
