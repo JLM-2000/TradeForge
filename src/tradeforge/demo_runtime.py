@@ -112,6 +112,9 @@ class DemoRuntime:
             try:
                 self.quotes.update(self._market_data_provider.fetch_quotes(self.instruments))
                 self._live_data_ready = True
+                if not self._quotes_fresh():
+                    self._live_data_ready = False
+                    self._live_data_error = "live quotes are stale; market may be closed"
             except MarketDataError as exc:
                 self._live_data_error = str(exc)
         self.owner_limits = OwnerHardLimits(
@@ -306,6 +309,12 @@ class DemoRuntime:
 
     def start_auto(self) -> dict[str, Any]:
         with self._lock:
+            if self._market_data_live and not self._quotes_fresh():
+                self._flags["market_data_healthy"] = False
+                self._flags["stale_prices"] = True
+                self._live_data_error = "live quotes are stale; market may be closed"
+                self._notify("critical", "Automatic trading unavailable", self._live_data_error)
+                raise ResumeDenied(("stale_market_data",))
             if self.controls.record.state.value != "RUNNING":
                 raise ResumeDenied(("trading_not_running",))
             if self._session_closed:
@@ -686,6 +695,13 @@ class DemoRuntime:
         self.quotes[instrument_id] = quote
         self.broker.set_quote(quote)
         return quote
+
+    def _quotes_fresh(self) -> bool:
+        now = utc_now()
+        return bool(self.quotes) and all(
+            quote.timestamp <= now and now - quote.timestamp <= timedelta(seconds=5)
+            for quote in self.quotes.values()
+        )
 
     def _risk_snapshot(self, instrument_id: str) -> RiskSnapshot:
         equity, invested, _, positions = self._portfolio_values()
