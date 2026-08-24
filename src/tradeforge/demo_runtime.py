@@ -9,6 +9,7 @@ capability.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -71,6 +72,9 @@ class DemoRuntime:
             raise ValueError("auto_trade_every_ticks must be positive")
         self._auto_interval_seconds = auto_interval_seconds
         self._auto_trade_every_ticks = auto_trade_every_ticks
+        self._virtual_capital = Decimal(os.getenv("TRADEFORGE_DEMO_CAPITAL_EUR", "1000"))
+        if self._virtual_capital <= Decimal("0"):
+            raise ValueError("TRADEFORGE_DEMO_CAPITAL_EUR must be positive")
         if str(db_path) != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.store = SQLiteStore(db_path)
@@ -92,18 +96,18 @@ class DemoRuntime:
         }
         self.owner_limits = OwnerHardLimits(
             version="demo-owner-limits-v1",
-            max_total_capital_eur=Decimal("150"),
-            max_position_eur=Decimal("25"),
-            max_total_exposure_eur=Decimal("75"),
+            max_total_capital_eur=self._virtual_capital,
+            max_position_eur=Decimal("100"),
+            max_total_exposure_eur=Decimal("300"),
             max_open_positions=3,
-            max_daily_loss_eur=Decimal("5"),
-            max_daily_profit_eur=Decimal("20"),
-            max_weekly_loss_eur=Decimal("10"),
+            max_daily_loss_eur=Decimal("25"),
+            max_daily_profit_eur=Decimal("50"),
+            max_weekly_loss_eur=Decimal("75"),
             max_weekly_profit_eur=None,
-            max_monthly_loss_eur=Decimal("20"),
+            max_monthly_loss_eur=Decimal("150"),
             max_monthly_profit_eur=None,
             max_drawdown_percent=Decimal("10"),
-            max_orders_per_day=20,
+            max_orders_per_day=50,
         )
         self.controls = ControlCenter(self.store, self.settings)
         self.risk_configuration = RiskConfiguration(
@@ -119,7 +123,7 @@ class DemoRuntime:
         )
         self.broker = PaperBroker(
             self.settings.bot_account_id,
-            Decimal("123.00"),
+            self._virtual_capital,
             self.instruments,
             self.quotes,
             SimulationConfig(slippage_bps=Decimal("2"), commission_bps=Decimal("8"), fixed_fee=Decimal("0.05")),
@@ -132,11 +136,11 @@ class DemoRuntime:
             "reconciliation_ok": True,
             "stale_prices": False,
         }
-        self._realized_pnl = Decimal("18.42")
-        self._realized_today = Decimal("1.12")
-        self._realized_week = Decimal("4.18")
-        self._realized_month = Decimal("8.92")
-        self._deposits = Decimal("100")
+        self._realized_pnl = Decimal("0")
+        self._realized_today = Decimal("0")
+        self._realized_week = Decimal("0")
+        self._realized_month = Decimal("0")
+        self._deposits = self._virtual_capital
         self._withdrawals = Decimal("0")
         self._notifications: list[dict[str, Any]] = []
         self._idempotency_keys: set[str] = set()
@@ -148,6 +152,8 @@ class DemoRuntime:
         self._auto_last_action: str | None = None
         self._session_closed = False
         self._orders_today = 0
+        self._auto_session_id = new_id("auto-session")
+        self._auto_session_start_equity: Decimal | None = None
         self._seed_if_needed()
 
     def close(self) -> None:
@@ -190,6 +196,7 @@ class DemoRuntime:
                     "lastAction": self._auto_last_action,
                     "tick": self._auto_tick,
                     "sessionClosed": self._session_closed,
+                    "sessionStartEquity": money(self._auto_session_start_equity) if self._auto_session_start_equity is not None else None,
                 },
                 "metrics": {
                     "totalEquity": money(equity),
@@ -208,6 +215,8 @@ class DemoRuntime:
                     "allTimePnl": money(self._realized_pnl),
                     "totalReturnPct": f"{(self._realized_pnl + unrealized) / self._deposits * Decimal('100'):.2f}%" if self._deposits else "0.00%",
                     "todayReturnPct": f"{self._realized_today / self._deposits * Decimal('100'):.2f}%" if self._deposits else "0.00%",
+                    "autoSessionPnl": money(equity - self._auto_session_start_equity) if self._auto_session_start_equity is not None else "0.00",
+                    "autoSessionReturnPct": f"{(equity - self._auto_session_start_equity) / self._auto_session_start_equity * Decimal('100'):.2f}%" if self._auto_session_start_equity else "0.00%",
                     "currentDrawdown": "2.8%",
                     "maxDrawdown": "6.4%",
                     "currentExposure": money(invested),
@@ -283,6 +292,7 @@ class DemoRuntime:
                 raise ResumeDenied(checks.failures())
             if self._auto_running:
                 return self.dashboard()
+            self._auto_session_start_equity = self._portfolio_values()[0]
             self._auto_stop.clear()
             self._auto_running = True
             self._auto_last_action = "Automatic PAPER trading started"
@@ -481,7 +491,7 @@ class DemoRuntime:
 
     def _seed_if_needed(self) -> None:
         had_events = bool(self.store.events())
-        seed_orders = (("AAPL", Decimal("0.20")), ("MSFT", Decimal("0.05")), ("SAP", Decimal("0.10")))
+        seed_orders = (("AAPL", Decimal("1.00")), ("MSFT", Decimal("0.20")), ("SAP", Decimal("0.50")))
         seed_quotes = {
             "AAPL": replace(self.quotes["AAPL"], bid=Decimal("99.90"), ask=Decimal("100.00")),
             "MSFT": replace(self.quotes["MSFT"], bid=Decimal("399.80"), ask=Decimal("400.00")),
@@ -559,12 +569,12 @@ class DemoRuntime:
             return
         if positions:
             position = positions[(self._auto_tick // self._auto_trade_every_ticks - 1) % len(positions)]
-            notional = min(Decimal("2"), position.market_value)
+            notional = min(Decimal("25"), position.market_value)
             result = self.place_order(
                 position.instrument_id,
                 "SELL",
                 notional,
-                f"auto-exit-{self._auto_tick}-{position.instrument_id}",
+                f"{self._auto_session_id}-exit-{self._auto_tick}-{position.instrument_id}",
                 strategy_id="demo-trend-v1",
                 reason_code="AUTO_SIGNAL",
             )
@@ -574,8 +584,8 @@ class DemoRuntime:
             result = self.place_order(
                 instrument_id,
                 "BUY",
-                Decimal("5"),
-                f"auto-entry-{self._auto_tick}-{instrument_id}",
+                Decimal("25"),
+                f"{self._auto_session_id}-entry-{self._auto_tick}-{instrument_id}",
                 strategy_id="demo-trend-v1",
                 reason_code="AUTO_SIGNAL",
             )
@@ -665,7 +675,7 @@ class DemoRuntime:
         self._notify("info", "Manual withdrawal detected", f"EUR {money(amount)} recorded as cash movement")
 
     def _risk_view(self) -> dict[str, Any]:
-        current_target = min(Decimal("12.50"), self.owner_limits.max_position_eur)
+        current_target = min(Decimal("50"), self.owner_limits.max_position_eur)
         return {
             "mode": self.risk_configuration.mode.value,
             "hardLimits": {

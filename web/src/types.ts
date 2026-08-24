@@ -26,6 +26,7 @@ export interface Dashboard {
     running: boolean;
     strategy: string;
     intervalSeconds: number;
+    tradeEverySeconds: number;
     lastAction: string | null;
     tick: number;
     sessionClosed: boolean;
