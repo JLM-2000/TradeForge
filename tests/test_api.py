@@ -97,7 +97,7 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_auto_start_runs_paper_orders_and_pause_stops_worker(self) -> None:
         directory = tempfile.TemporaryDirectory()
-        runtime = DemoRuntime(Path(directory.name) / "auto.db", auto_interval_seconds=0.02)
+        runtime = DemoRuntime(Path(directory.name) / "auto.db", auto_interval_seconds=0.02, auto_trade_every_ticks=2)
         client = TestClient(create_app(runtime))
         try:
             started = client.post("/api/v1/auto/start")

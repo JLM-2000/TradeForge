@@ -58,11 +58,19 @@ def iso(value: datetime | None) -> str | None:
 class DemoRuntime:
     """One-owner, PAPER-only runtime for local and hosted demonstrations."""
 
-    def __init__(self, db_path: str | Path = "artifacts/tradeforge-demo.db", auto_interval_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        db_path: str | Path = "artifacts/tradeforge-demo.db",
+        auto_interval_seconds: float = 5.0,
+        auto_trade_every_ticks: int = 4,
+    ) -> None:
         self._lock = threading.RLock()
         if auto_interval_seconds <= 0:
             raise ValueError("auto_interval_seconds must be positive")
+        if auto_trade_every_ticks < 1:
+            raise ValueError("auto_trade_every_ticks must be positive")
         self._auto_interval_seconds = auto_interval_seconds
+        self._auto_trade_every_ticks = auto_trade_every_ticks
         if str(db_path) != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.store = SQLiteStore(db_path)
@@ -139,6 +147,7 @@ class DemoRuntime:
         self._auto_tick = 0
         self._auto_last_action: str | None = None
         self._session_closed = False
+        self._orders_today = 0
         self._seed_if_needed()
 
     def close(self) -> None:
@@ -177,6 +186,7 @@ class DemoRuntime:
                     "running": self._auto_running,
                     "strategy": "Demo Trend v1",
                     "intervalSeconds": self._auto_interval_seconds,
+                    "tradeEverySeconds": self._auto_interval_seconds * self._auto_trade_every_ticks,
                     "lastAction": self._auto_last_action,
                     "tick": self._auto_tick,
                     "sessionClosed": self._session_closed,
@@ -449,6 +459,7 @@ class DemoRuntime:
                 sizing_policy=SizingPolicy.BOUNDED,
             )
             result = self.execution.submit_intent(intent, quote, self._risk_snapshot(instrument_id))
+            self._orders_today += 1
             self._idempotency_keys.add(key)
             if result.submission and result.submission.executions:
                 if side_value is Side.SELL and before_position is not None:
@@ -463,6 +474,9 @@ class DemoRuntime:
                 self._notify("info", "Paper order filled", f"{side_value.value} {instrument_id} simulated")
             elif result.risk_decision.decision is Decision.REJECT:
                 self._notify("warning", "Paper order rejected", "; ".join(result.risk_decision.reasons))
+                if strategy_id == "demo-trend-v1" and "ORDER_RATE_LIMIT" in result.risk_decision.reasons:
+                    self._stop_auto_worker()
+                    self._notify("critical", "Automatic trading paused", "The owner order-rate limit was reached for this paper session")
             return {"decision": result.risk_decision.decision.value, "reasons": list(result.risk_decision.reasons), "dashboard": self.dashboard()}
 
     def _seed_if_needed(self) -> None:
@@ -540,11 +554,11 @@ class DemoRuntime:
     def _auto_signal(self) -> None:
         """Deterministic paper strategy; no model or live market path is used."""
         positions = self.broker.positions()
-        if self._auto_tick % 2:
+        if self._auto_tick % self._auto_trade_every_ticks:
             self._auto_last_action = "Market observation completed"
             return
         if positions:
-            position = positions[(self._auto_tick // 2 - 1) % len(positions)]
+            position = positions[(self._auto_tick // self._auto_trade_every_ticks - 1) % len(positions)]
             notional = min(Decimal("2"), position.market_value)
             result = self.place_order(
                 position.instrument_id,
@@ -556,7 +570,7 @@ class DemoRuntime:
             )
             self._auto_last_action = f"{position.instrument_id} exit: {result['decision']}"
         else:
-            instrument_id = ("AAPL", "MSFT", "SAP")[(self._auto_tick // 2) % 3]
+            instrument_id = ("AAPL", "MSFT", "SAP")[(self._auto_tick // self._auto_trade_every_ticks) % 3]
             result = self.place_order(
                 instrument_id,
                 "BUY",
@@ -585,7 +599,7 @@ class DemoRuntime:
             total_equity=equity,
             current_exposure=invested,
             open_positions=len(positions),
-            open_orders_today=len(self.broker.orders()),
+            open_orders_today=self._orders_today,
             realized_pnl_today=self._realized_today,
             realized_pnl_week=self._realized_week,
             realized_pnl_month=self._realized_month,
