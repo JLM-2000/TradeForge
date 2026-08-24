@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Callable, Mapping, Protocol
 from urllib.parse import urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .domain import Instrument, Quote
@@ -65,6 +66,8 @@ class AlpacaMarketDataProvider:
         try:
             response = self._request_opener(request, timeout=self.timeout_seconds)
             payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise MarketDataError(f"official market data request failed: HTTP {exc.code}") from exc
         except Exception as exc:
             raise MarketDataError(f"official market data request failed: {type(exc).__name__}") from exc
         return self.parse_latest_quotes(payload, instruments, self.feed)
@@ -117,12 +120,12 @@ class PolygonMarketDataProvider:
     def __init__(
         self,
         api_key: str | None = None,
-        base_url: str = "https://api.polygon.io",
+        base_url: str | None = None,
         timeout_seconds: float = 3.0,
         request_opener: Callable[..., object] = urlopen,
     ) -> None:
-        self.api_key = api_key or os.getenv("POLYGON_API_KEY", "")
-        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key or os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY", "")
+        self.base_url = (base_url or os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")).rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._request_opener = request_opener
 
@@ -141,6 +144,8 @@ class PolygonMarketDataProvider:
                 response = self._request_opener(request, timeout=self.timeout_seconds)
                 payload = json.loads(response.read().decode("utf-8"))
                 result[instrument_id] = self.parse_last_quote(payload, instrument, "polygon-nbbo")
+            except HTTPError as exc:
+                raise MarketDataError(f"official Polygon quote request failed for {instrument.ticker}: HTTP {exc.code}") from exc
             except MarketDataError:
                 raise
             except Exception as exc:

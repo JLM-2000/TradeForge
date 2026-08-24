@@ -49,7 +49,7 @@ Alternative Polygon/Massive configuration:
 ```text
 TRADEFORGE_MARKET_DATA_MODE=LIVE
 TRADEFORGE_MARKET_DATA_PROVIDER=POLYGON
-POLYGON_API_KEY=<market-data-key>
+MASSIVE_API_KEY=<market-data-key>
 ```
 
 This uses the provider's official latest-NBBO endpoint. Confirm current
