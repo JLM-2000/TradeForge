@@ -1,0 +1,3 @@
+# TradeForge
+
+Trading bot project.
