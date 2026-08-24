@@ -145,6 +145,11 @@ class PolygonMarketDataProvider:
                 payload = json.loads(response.read().decode("utf-8"))
                 result[instrument_id] = self.parse_last_quote(payload, instrument, "polygon-nbbo")
             except HTTPError as exc:
+                if exc.code == 403:
+                    raise MarketDataError(
+                        f"Massive denied real-time NBBO for {instrument.ticker}: HTTP 403; "
+                        "the account plan or market-data permission does not include this feed"
+                    ) from exc
                 raise MarketDataError(f"official Polygon quote request failed for {instrument.ticker}: HTTP {exc.code}") from exc
             except MarketDataError:
                 raise
