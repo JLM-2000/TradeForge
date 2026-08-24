@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .demo_runtime import DemoRuntime
 from .controls import ResumeDenied
+from .env import load_local_env
 
 
 class ReasonRequest(BaseModel):
@@ -31,6 +32,7 @@ class DemoOrderRequest(BaseModel):
 
 
 def create_app(runtime: DemoRuntime | None = None) -> FastAPI:
+    load_local_env()
     runtime = runtime or DemoRuntime(os.getenv("TRADEFORGE_DEMO_DB", "artifacts/tradeforge-demo.db"))
     app = FastAPI(title="TradeForge Dashboard API", version="0.2.0", docs_url="/api/docs", redoc_url=None)
     app.state.runtime = runtime

@@ -21,6 +21,19 @@ npm --prefix web run dev
 
 Open `http://localhost:5173`.
 
+## Local credentials file
+
+Copy `.env.example` to `.env` and fill the official market-data credentials in
+that untracked file. TradeForge loads it automatically on API startup without
+overriding existing environment variables:
+
+```bash
+cp .env.example .env
+# edit .env locally, then restart the API
+```
+
+Never commit `.env` or send its contents through chat.
+
 For a single-process bundle:
 
 ```bash

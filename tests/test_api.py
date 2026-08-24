@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import os
 import time
+from unittest.mock import patch
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -93,7 +94,8 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_operational_default_is_live_data_and_missing_feed_blocks_auto(self) -> None:
         directory = tempfile.TemporaryDirectory()
-        runtime = DemoRuntime(Path(directory.name) / "live-default.db")
+        with patch.dict(os.environ, {"ALPACA_API_KEY_ID": "", "ALPACA_API_SECRET_KEY": "", "MASSIVE_API_KEY": "", "POLYGON_API_KEY": ""}, clear=False):
+            runtime = DemoRuntime(Path(directory.name) / "live-default.db")
         client = TestClient(create_app(runtime))
         try:
             payload = client.get("/api/v1/dashboard").json()

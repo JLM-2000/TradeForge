@@ -510,6 +510,14 @@ class DemoRuntime:
                 if strategy_id == "demo-trend-v1" and "ORDER_RATE_LIMIT" in result.risk_decision.reasons:
                     self._stop_auto_worker()
                     self._notify("critical", "Automatic trading paused", "The owner order-rate limit was reached for this paper session")
+                if strategy_id == "demo-trend-v1" and any(
+                    reason in result.risk_decision.reasons
+                    for reason in ("STALE_OR_FUTURE_QUOTE", "SPREAD_TOO_WIDE")
+                ):
+                    self._flags["market_data_healthy"] = False
+                    self._stop_auto_worker()
+                    self.controls.pause("Live market data quality failure")
+                    self._notify("critical", "Automatic trading paused", "Live quote freshness or spread failed the safety checks")
             return {"decision": result.risk_decision.decision.value, "reasons": list(result.risk_decision.reasons), "dashboard": self.dashboard()}
 
     def _seed_if_needed(self) -> None:
@@ -518,13 +526,26 @@ class DemoRuntime:
                 self._event("LIVE_MARKET_DATA_NOT_READY", {"error": self._live_data_error or "unavailable"})
             return
         had_events = bool(self.store.events())
-        seed_orders = (("AAPL", Decimal("2.90")), ("MSFT", Decimal("0.70")), ("SAP", Decimal("1.55")))
         seed_quotes = self.quotes if self._market_data_live else {
             "AAPL": replace(self.quotes["AAPL"], bid=Decimal("99.90"), ask=Decimal("100.00")),
             "MSFT": replace(self.quotes["MSFT"], bid=Decimal("399.80"), ask=Decimal("400.00")),
             "SAP": replace(self.quotes["SAP"], bid=Decimal("179.80"), ask=Decimal("180.00")),
         }
+        seed_notional = self.owner_limits.max_total_exposure_eur / Decimal("3") * Decimal("0.95")
+        seed_orders = tuple(
+            (
+                instrument_id,
+                self.risk.quantity_for_notional(
+                    seed_notional,
+                    seed_quotes[instrument_id].ask,
+                    self.instruments[instrument_id].quantity_increment,
+                ),
+            )
+            for instrument_id in self.instruments
+        )
         for instrument_id, quantity in seed_orders:
+            if quantity <= Decimal("0"):
+                continue
             request = OrderRequest(
                 order_id=new_id("seed"),
                 intent_id="demo-seed",

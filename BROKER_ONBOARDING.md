@@ -91,6 +91,10 @@ BROKER_API_SECRET=<secret-manager-reference>
 The names above are placeholders. Do not populate them until an official
 adapter is implemented and reviewed.
 
+For local market-data-only PAPER operation, use the untracked `.env` file from
+`.env.example`; no broker order credentials are needed because `PaperBroker`
+executes the simulated orders.
+
 ## 5. Validate before any live capability
 
 The adapter must pass, in order:

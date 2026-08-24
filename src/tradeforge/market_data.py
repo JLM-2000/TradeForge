@@ -43,8 +43,8 @@ class AlpacaMarketDataProvider:
         timeout_seconds: float = 3.0,
         request_opener: Callable[..., object] = urlopen,
     ) -> None:
-        self.api_key = api_key or os.getenv("ALPACA_API_KEY_ID", "")
-        self.api_secret = api_secret or os.getenv("ALPACA_API_SECRET_KEY", "")
+        self.api_key = api_key if api_key is not None else os.getenv("ALPACA_API_KEY_ID", "")
+        self.api_secret = api_secret if api_secret is not None else os.getenv("ALPACA_API_SECRET_KEY", "")
         self.base_url = base_url.rstrip("/")
         self.feed = feed
         self.timeout_seconds = timeout_seconds
@@ -124,7 +124,7 @@ class PolygonMarketDataProvider:
         timeout_seconds: float = 3.0,
         request_opener: Callable[..., object] = urlopen,
     ) -> None:
-        self.api_key = api_key or os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY", "")
+        self.api_key = api_key if api_key is not None else os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY", "")
         self.base_url = (base_url or os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")).rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._request_opener = request_opener
