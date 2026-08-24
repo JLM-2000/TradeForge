@@ -26,6 +26,8 @@ class DashboardApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["mode"], "PAPER")
         self.assertFalse(payload["liveExecution"])
+        self.assertEqual(payload["metrics"]["totalDeposits"], "1000.00")
+        self.assertEqual(payload["risk"]["hardLimits"]["maxExposure"], "900.00")
         self.assertEqual(len(payload["positions"]), 3)
         self.assertEqual(self.client.get("/").status_code, 200)
 

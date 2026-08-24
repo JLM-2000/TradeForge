@@ -97,8 +97,8 @@ class DemoRuntime:
         self.owner_limits = OwnerHardLimits(
             version="demo-owner-limits-v1",
             max_total_capital_eur=self._virtual_capital,
-            max_position_eur=Decimal("100"),
-            max_total_exposure_eur=Decimal("300"),
+            max_position_eur=Decimal("300"),
+            max_total_exposure_eur=Decimal("900"),
             max_open_positions=3,
             max_daily_loss_eur=Decimal("25"),
             max_daily_profit_eur=Decimal("50"),
@@ -491,7 +491,7 @@ class DemoRuntime:
 
     def _seed_if_needed(self) -> None:
         had_events = bool(self.store.events())
-        seed_orders = (("AAPL", Decimal("1.00")), ("MSFT", Decimal("0.20")), ("SAP", Decimal("0.50")))
+        seed_orders = (("AAPL", Decimal("2.90")), ("MSFT", Decimal("0.70")), ("SAP", Decimal("1.55")))
         seed_quotes = {
             "AAPL": replace(self.quotes["AAPL"], bid=Decimal("99.90"), ask=Decimal("100.00")),
             "MSFT": replace(self.quotes["MSFT"], bid=Decimal("399.80"), ask=Decimal("400.00")),
@@ -567,7 +567,28 @@ class DemoRuntime:
         if self._auto_tick % self._auto_trade_every_ticks:
             self._auto_last_action = "Market observation completed"
             return
-        if positions:
+        _, invested, _, _ = self._portfolio_values()
+        target_exposure = self.owner_limits.max_total_exposure_eur * Decimal("0.98")
+        available_capacity = target_exposure - invested
+        if available_capacity >= Decimal("10") and self.broker.snapshot().cash > Decimal("10"):
+            instrument_id = min(
+                self.instruments,
+                key=lambda item: next(
+                    (position.market_value for position in positions if position.instrument_id == item),
+                    Decimal("0"),
+                ),
+            )
+            notional = min(Decimal("25"), available_capacity, self.broker.snapshot().cash - Decimal("5"))
+            result = self.place_order(
+                instrument_id,
+                "BUY",
+                notional,
+                f"{self._auto_session_id}-entry-{self._auto_tick}-{instrument_id}",
+                strategy_id="demo-trend-v1",
+                reason_code="AUTO_SIGNAL",
+            )
+            self._auto_last_action = f"{instrument_id} entry: {result['decision']}"
+        elif positions:
             position = positions[(self._auto_tick // self._auto_trade_every_ticks - 1) % len(positions)]
             notional = min(Decimal("25"), position.market_value)
             result = self.place_order(
