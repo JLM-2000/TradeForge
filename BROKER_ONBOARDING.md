@@ -25,6 +25,27 @@ move capital through an API.
 Start with the broker's paper/sandbox account if available. The demo runtime
 does not require a broker account at all.
 
+## Live market data without live execution
+
+TradeForge can read official Alpaca stock quotes while continuing to use
+`PaperBroker` for every order. This is the intended paper experiment mode:
+
+```text
+TRADEFORGE_MARKET_DATA_MODE=ALPACA_LIVE
+TRADEFORGE_ALPACA_FEED=iex
+ALPACA_API_KEY_ID=<market-data-key>
+ALPACA_API_SECRET_KEY=<market-data-secret>
+```
+
+The adapter uses Alpaca's documented `GET /v2/stocks/quotes/latest` endpoint
+and the `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers. The official IEX
+feed is the default. Feed availability and subscription limits must be
+verified with Alpaca; no credential is included in this repository.
+
+If the provider request fails, quotes are missing, or timestamps are stale,
+TradeForge pauses automatic paper trading. It never silently falls back to
+synthetic prices while the dashboard says LIVE DATA.
+
 ## 3. Create API credentials manually
 
 In the official broker security console:

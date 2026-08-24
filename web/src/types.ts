@@ -4,6 +4,7 @@ export interface Dashboard {
   product: string;
   mode: string;
   modeLabel: string;
+  marketDataMode: string;
   demo: boolean;
   liveExecution: boolean;
   system: {

@@ -43,6 +43,7 @@ from .domain import (
     utc_now,
 )
 from .execution import ExecutionService
+from .market_data import AlpacaMarketDataProvider, MarketDataError
 from .persistence import SQLiteStore
 from .reconciliation import ReconciliationService
 from .risk import RiskEngine
@@ -64,6 +65,7 @@ class DemoRuntime:
         db_path: str | Path = "artifacts/tradeforge-demo.db",
         auto_interval_seconds: float = 5.0,
         auto_trade_every_ticks: int = 4,
+        market_data_mode: str | None = None,
     ) -> None:
         self._lock = threading.RLock()
         if auto_interval_seconds <= 0:
@@ -94,6 +96,23 @@ class DemoRuntime:
             "MSFT": Quote("MSFT", Decimal("417.80"), Decimal("418.00"), utc_now(), "demo-feed"),
             "SAP": Quote("SAP", Decimal("188.20"), Decimal("188.35"), utc_now(), "demo-feed"),
         }
+        configured_market_mode = (market_data_mode or os.getenv("TRADEFORGE_MARKET_DATA_MODE", "ALPACA_LIVE")).upper()
+        self._market_data_live = configured_market_mode in {"LIVE", "ALPACA", "ALPACA_LIVE"}
+        self._market_data_provider = (
+            AlpacaMarketDataProvider(
+                feed=os.getenv("TRADEFORGE_ALPACA_FEED", "iex"),
+            )
+            if self._market_data_live
+            else None
+        )
+        self._live_data_ready = not self._market_data_live
+        self._live_data_error: str | None = None
+        if self._market_data_provider is not None:
+            try:
+                self.quotes.update(self._market_data_provider.fetch_quotes(self.instruments))
+                self._live_data_ready = True
+            except MarketDataError as exc:
+                self._live_data_error = str(exc)
         self.owner_limits = OwnerHardLimits(
             version="demo-owner-limits-v1",
             max_total_capital_eur=self._virtual_capital,
@@ -132,7 +151,7 @@ class DemoRuntime:
         self.reconciliation = ReconciliationService(self.settings, self.controls, self.store)
         self._flags: dict[str, bool] = {
             "broker_healthy": True,
-            "market_data_healthy": True,
+            "market_data_healthy": self._live_data_ready,
             "reconciliation_ok": True,
             "stale_prices": False,
         }
@@ -169,17 +188,19 @@ class DemoRuntime:
             return {
                 "product": "TradeForge",
                 "mode": "PAPER",
-                "modeLabel": "PAPER - SIMULATED OPERATIONS",
+                "modeLabel": "PAPER - LIVE MARKET DATA" if self._market_data_live else "PAPER - SYNTHETIC MARKET DATA",
+                "marketDataMode": "LIVE" if self._market_data_live else "SYNTHETIC",
                 "demo": True,
                 "liveExecution": False,
                 "system": {
                     "status": status,
                     "bot": "STOPPED" if kill_active else "PAUSED" if control.state.value == "PAUSED" else "RUNNING",
                     "broker": "HEALTHY" if self._flags["broker_healthy"] else "UNAVAILABLE",
-                    "market": "STALE" if self._flags["stale_prices"] else "HEALTHY" if self._flags["market_data_healthy"] else "UNAVAILABLE",
+                    "market": "LIVE" if self._market_data_live and self._flags["market_data_healthy"] else "STALE" if self._flags["stale_prices"] else "HEALTHY" if self._flags["market_data_healthy"] else "UNAVAILABLE",
                     "risk": "PAUSED" if control.state.value != "RUNNING" else "HEALTHY",
                     "reconciliation": "OK" if self._flags["reconciliation_ok"] else "MISMATCH",
                     "lastUpdate": iso(utc_now()),
+                    "marketDataError": self._live_data_error,
                 },
                 "control": {
                     "state": control.state.value,
@@ -490,9 +511,13 @@ class DemoRuntime:
             return {"decision": result.risk_decision.decision.value, "reasons": list(result.risk_decision.reasons), "dashboard": self.dashboard()}
 
     def _seed_if_needed(self) -> None:
+        if self._market_data_live and not self._live_data_ready:
+            if not self.store.events():
+                self._event("LIVE_MARKET_DATA_NOT_READY", {"error": self._live_data_error or "unavailable"})
+            return
         had_events = bool(self.store.events())
         seed_orders = (("AAPL", Decimal("2.90")), ("MSFT", Decimal("0.70")), ("SAP", Decimal("1.55")))
-        seed_quotes = {
+        seed_quotes = self.quotes if self._market_data_live else {
             "AAPL": replace(self.quotes["AAPL"], bid=Decimal("99.90"), ask=Decimal("100.00")),
             "MSFT": replace(self.quotes["MSFT"], bid=Decimal("399.80"), ask=Decimal("400.00")),
             "SAP": replace(self.quotes["SAP"], bid=Decimal("179.80"), ask=Decimal("180.00")),
@@ -536,6 +561,12 @@ class DemoRuntime:
                     self._auto_tick += 1
                     self._advance_market()
                     self._auto_signal()
+                except MarketDataError as exc:
+                    self._flags["market_data_healthy"] = False
+                    self._stop_auto_worker()
+                    self.controls.pause("Live market data unavailable")
+                    self._notify("critical", "Live market data unavailable", str(exc))
+                    return
                 except Exception as exc:  # a worker failure must stop automation
                     self._auto_running = False
                     self._auto_last_action = "Automatic trading stopped after worker error"
@@ -543,6 +574,15 @@ class DemoRuntime:
                     return
 
     def _advance_market(self) -> None:
+        if self._market_data_provider is not None:
+            fresh_quotes = self._market_data_provider.fetch_quotes(self.instruments)
+            self.quotes.update(fresh_quotes)
+            self._live_data_ready = True
+            self._flags["market_data_healthy"] = True
+            self._live_data_error = None
+            for quote in fresh_quotes.values():
+                self.broker.set_quote(quote)
+            return
         moves = {
             "AAPL": (Decimal("0.06"), Decimal("-0.03"), Decimal("0.04"), Decimal("-0.05")),
             "MSFT": (Decimal("0.18"), Decimal("-0.12"), Decimal("0.10"), Decimal("-0.08")),
@@ -614,6 +654,9 @@ class DemoRuntime:
 
     def _current_quote(self, instrument_id: str) -> Quote:
         quote = self.quotes[instrument_id]
+        if self._market_data_live:
+            self.broker.set_quote(quote)
+            return quote
         if self._flags["stale_prices"]:
             return replace(quote, timestamp=utc_now() - timedelta(seconds=30))
         quote = replace(quote, timestamp=utc_now())

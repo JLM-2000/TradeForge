@@ -13,7 +13,7 @@ from tradeforge.demo_runtime import DemoRuntime
 class DashboardApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
-        self.runtime = DemoRuntime(Path(self.directory.name) / "dashboard.db")
+        self.runtime = DemoRuntime(Path(self.directory.name) / "dashboard.db", market_data_mode="SYNTHETIC")
         self.client = TestClient(create_app(self.runtime))
 
     def tearDown(self) -> None:
@@ -70,7 +70,7 @@ class DashboardApiTests(unittest.TestCase):
         for scenario in scenarios:
             with self.subTest(scenario=scenario):
                 directory = tempfile.TemporaryDirectory()
-                runtime = DemoRuntime(Path(directory.name) / "scenario.db")
+                runtime = DemoRuntime(Path(directory.name) / "scenario.db", market_data_mode="SYNTHETIC")
                 try:
                     response = TestClient(create_app(runtime)).post(f"/api/v1/demo/scenarios/{scenario}")
                     self.assertEqual(response.status_code, 200)
@@ -91,6 +91,19 @@ class DashboardApiTests(unittest.TestCase):
             os.environ.pop("TRADEFORGE_ENV", None)
             os.environ.pop("TRADEFORGE_DASHBOARD_TOKEN", None)
 
+    def test_operational_default_is_live_data_and_missing_feed_blocks_auto(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        runtime = DemoRuntime(Path(directory.name) / "live-default.db")
+        client = TestClient(create_app(runtime))
+        try:
+            payload = client.get("/api/v1/dashboard").json()
+            self.assertEqual(payload["marketDataMode"], "LIVE")
+            self.assertEqual(payload["system"]["market"], "UNAVAILABLE")
+            self.assertEqual(client.post("/api/v1/auto/start").status_code, 409)
+        finally:
+            runtime.close()
+            directory.cleanup()
+
     def test_websocket_stream_publishes_dashboard_state(self) -> None:
         with self.client.websocket_connect("/api/v1/ws") as websocket:
             payload = websocket.receive_json()
@@ -99,7 +112,7 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_auto_start_runs_paper_orders_and_pause_stops_worker(self) -> None:
         directory = tempfile.TemporaryDirectory()
-        runtime = DemoRuntime(Path(directory.name) / "auto.db", auto_interval_seconds=0.02, auto_trade_every_ticks=2)
+        runtime = DemoRuntime(Path(directory.name) / "auto.db", auto_interval_seconds=0.02, auto_trade_every_ticks=2, market_data_mode="SYNTHETIC")
         client = TestClient(create_app(runtime))
         try:
             started = client.post("/api/v1/auto/start")

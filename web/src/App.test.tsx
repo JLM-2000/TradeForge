@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
 const fixture = {
-  product: "TradeForge", mode: "PAPER", modeLabel: "PAPER - SIMULATED OPERATIONS", demo: true, liveExecution: false,
+  product: "TradeForge", mode: "PAPER", modeLabel: "PAPER - SYNTHETIC MARKET DATA", marketDataMode: "SYNTHETIC", demo: true, liveExecution: false,
   system: { status: "HEALTHY", bot: "RUNNING", broker: "HEALTHY", market: "HEALTHY", risk: "HEALTHY", reconciliation: "OK", lastUpdate: "2026-08-24T12:00:00Z" },
   control: { state: "RUNNING", reason: "", killSwitch: false, activatedAt: null, cancelPendingOnPause: true },
   automation: { running: false, strategy: "Demo Trend v1", intervalSeconds: 5, lastAction: null, tick: 0, sessionClosed: false },
@@ -28,7 +28,7 @@ describe("TradeForge dashboard safety controls", () => {
 
   it("requires typed confirmation before activating STOP EVERYTHING", async () => {
     render(<App />);
-    expect(await screen.findByText("PAPER", { exact: true })).toBeInTheDocument();
+    expect(await screen.findByText("PAPER · SYNTHETIC DATA")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /stop everything/i }));
     expect(screen.getByRole("heading", { name: "Stop everything?" })).toBeInTheDocument();
     const confirm = screen.getByPlaceholderText("STOP");

@@ -5,9 +5,9 @@
 The dashboard is a real operations surface over the PAPER runtime. It is not a
 static demo: paper order requests flow through `TradeIntent`, `RiskEngine`,
 `ExecutionService`, `PaperBroker`, ledger events, and dashboard projections.
-The badge intentionally says `PAPER - SIMULATED OPERATIONS`; it must never be
-described as live trading just because the simulated workflow resembles live
-operations.
+The badge distinguishes `PAPER - SYNTHETIC MARKET DATA` from `PAPER - LIVE
+MARKET DATA`. Neither is live execution. A live-data paper run reads official
+quotes while all orders remain simulated.
 
 ## Start locally
 
@@ -60,6 +60,8 @@ production deployment of the dashboard service, set:
 TRADEFORGE_ENV=production
 TRADEFORGE_DASHBOARD_TOKEN=<owner-only-secret>
 TRADEFORGE_CORS_ORIGINS=<exact-frontend-origin>
+TRADEFORGE_MARKET_DATA_MODE=ALPACA_LIVE
+TRADEFORGE_ALPACA_FEED=iex
 ```
 
 Requests fail closed without the owner token. The current token guard is a
@@ -83,7 +85,8 @@ switch. The UI requires a typed `CLOSE` confirmation.
 ## Known limitations
 
 The dashboard is production-built and paper-safe, but the demo runtime still
-uses the local SQLite development adapter and synthetic state. PostgreSQL,
+uses the local SQLite development adapter and synthetic state unless an
+official live market-data provider is explicitly configured. PostgreSQL,
 durable worker supervision, external identity, encrypted production backups,
 browser E2E coverage, and a real market-data service are not complete. No live
 broker adapter or real-money order path exists.
