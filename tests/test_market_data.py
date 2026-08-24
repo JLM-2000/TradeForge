@@ -2,7 +2,7 @@ import unittest
 from decimal import Decimal
 
 from tradeforge.domain import AssetClass, Instrument
-from tradeforge.market_data import AlpacaMarketDataProvider, MarketDataError
+from tradeforge.market_data import AlpacaMarketDataProvider, MarketDataError, PolygonMarketDataProvider
 
 
 class MarketDataAdapterTests(unittest.TestCase):
@@ -36,6 +36,23 @@ class MarketDataAdapterTests(unittest.TestCase):
 
     def test_live_provider_requires_credentials(self) -> None:
         provider = AlpacaMarketDataProvider(api_key="", api_secret="")
+        with self.assertRaises(MarketDataError):
+            provider.fetch_quotes({"AAPL": self.instrument})
+
+    def test_parses_official_polygon_nbbo_shape(self) -> None:
+        payload = {
+            "results": {
+                "p": "199.91",
+                "P": "200.01",
+                "t": 1787601600000000000,
+            }
+        }
+        quote = PolygonMarketDataProvider.parse_last_quote(payload, self.instrument, "polygon-nbbo")
+        self.assertEqual(quote.bid, Decimal("199.91"))
+        self.assertEqual(quote.ask, Decimal("200.01"))
+
+    def test_polygon_provider_requires_credentials_on_fetch(self) -> None:
+        provider = PolygonMarketDataProvider(api_key="")
         with self.assertRaises(MarketDataError):
             provider.fetch_quotes({"AAPL": self.instrument})
 

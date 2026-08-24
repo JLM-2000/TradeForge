@@ -27,11 +27,13 @@ does not require a broker account at all.
 
 ## Live market data without live execution
 
-TradeForge can read official Alpaca stock quotes while continuing to use
-`PaperBroker` for every order. This is the intended paper experiment mode:
+TradeForge can read official Alpaca or Polygon/Massive stock quotes while
+continuing to use `PaperBroker` for every order. This is the intended paper
+experiment mode. Select the provider explicitly:
 
 ```text
-TRADEFORGE_MARKET_DATA_MODE=ALPACA_LIVE
+TRADEFORGE_MARKET_DATA_MODE=LIVE
+TRADEFORGE_MARKET_DATA_PROVIDER=ALPACA
 TRADEFORGE_ALPACA_FEED=iex
 ALPACA_API_KEY_ID=<market-data-key>
 ALPACA_API_SECRET_KEY=<market-data-secret>
@@ -41,6 +43,18 @@ The adapter uses Alpaca's documented `GET /v2/stocks/quotes/latest` endpoint
 and the `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers. The official IEX
 feed is the default. Feed availability and subscription limits must be
 verified with Alpaca; no credential is included in this repository.
+
+Alternative Polygon/Massive configuration:
+
+```text
+TRADEFORGE_MARKET_DATA_MODE=LIVE
+TRADEFORGE_MARKET_DATA_PROVIDER=POLYGON
+POLYGON_API_KEY=<market-data-key>
+```
+
+This uses the provider's official latest-NBBO endpoint. Confirm current
+provider branding, subscription, exchange coverage, and redistribution terms
+before relying on it.
 
 If the provider request fails, quotes are missing, or timestamps are stale,
 TradeForge pauses automatic paper trading. It never silently falls back to

@@ -43,7 +43,7 @@ from .domain import (
     utc_now,
 )
 from .execution import ExecutionService
-from .market_data import AlpacaMarketDataProvider, MarketDataError
+from .market_data import AlpacaMarketDataProvider, MarketDataError, PolygonMarketDataProvider
 from .persistence import SQLiteStore
 from .reconciliation import ReconciliationService
 from .risk import RiskEngine
@@ -98,13 +98,14 @@ class DemoRuntime:
         }
         configured_market_mode = (market_data_mode or os.getenv("TRADEFORGE_MARKET_DATA_MODE", "ALPACA_LIVE")).upper()
         self._market_data_live = configured_market_mode in {"LIVE", "ALPACA", "ALPACA_LIVE"}
-        self._market_data_provider = (
-            AlpacaMarketDataProvider(
-                feed=os.getenv("TRADEFORGE_ALPACA_FEED", "iex"),
-            )
-            if self._market_data_live
-            else None
-        )
+        provider_name = os.getenv("TRADEFORGE_MARKET_DATA_PROVIDER", "ALPACA").upper()
+        if self._market_data_live and provider_name == "POLYGON":
+            self._market_data_provider = PolygonMarketDataProvider()
+        elif self._market_data_live:
+            self._market_data_provider = AlpacaMarketDataProvider(feed=os.getenv("TRADEFORGE_ALPACA_FEED", "iex"))
+        else:
+            self._market_data_provider = None
+        self._market_data_provider_name = provider_name if self._market_data_live else "SYNTHETIC"
         self._live_data_ready = not self._market_data_live
         self._live_data_error: str | None = None
         if self._market_data_provider is not None:
@@ -190,6 +191,7 @@ class DemoRuntime:
                 "mode": "PAPER",
                 "modeLabel": "PAPER - LIVE MARKET DATA" if self._market_data_live else "PAPER - SYNTHETIC MARKET DATA",
                 "marketDataMode": "LIVE" if self._market_data_live else "SYNTHETIC",
+                "marketDataProvider": self._market_data_provider_name,
                 "demo": True,
                 "liveExecution": False,
                 "system": {

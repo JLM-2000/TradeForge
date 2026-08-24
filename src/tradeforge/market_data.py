@@ -102,3 +102,67 @@ class AlpacaMarketDataProvider:
         if missing:
             raise MarketDataError(f"official market data missing symbols: {', '.join(sorted(missing))}")
         return parsed
+
+
+class PolygonMarketDataProvider:
+    """Official Polygon/Massive latest-NBBO REST adapter.
+
+    It is market-data-only. PaperBroker remains the only executable order
+    implementation in TradeForge. The adapter polls the latest bid/ask so the
+    existing five-second safety loop can apply freshness checks.
+    """
+
+    is_live = True
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = "https://api.polygon.io",
+        timeout_seconds: float = 3.0,
+        request_opener: Callable[..., object] = urlopen,
+    ) -> None:
+        self.api_key = api_key or os.getenv("POLYGON_API_KEY", "")
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self._request_opener = request_opener
+
+    def fetch_quotes(self, instruments: Mapping[str, Instrument]) -> dict[str, Quote]:
+        if not self.api_key:
+            raise MarketDataError("official live market data requires POLYGON_API_KEY")
+        result: dict[str, Quote] = {}
+        for instrument_id, instrument in instruments.items():
+            query = urlencode({"apiKey": self.api_key})
+            request = Request(
+                f"{self.base_url}/v2/last/nbbo/{instrument.ticker}?{query}",
+                headers={"Accept": "application/json"},
+                method="GET",
+            )
+            try:
+                response = self._request_opener(request, timeout=self.timeout_seconds)
+                payload = json.loads(response.read().decode("utf-8"))
+                result[instrument_id] = self.parse_last_quote(payload, instrument, "polygon-nbbo")
+            except MarketDataError:
+                raise
+            except Exception as exc:
+                raise MarketDataError(f"official Polygon quote request failed for {instrument.ticker}: {type(exc).__name__}") from exc
+        return result
+
+    @staticmethod
+    def parse_last_quote(payload: Mapping[str, object], instrument: Instrument, source: str) -> Quote:
+        raw = payload.get("results")
+        if not isinstance(raw, Mapping):
+            raise MarketDataError(f"official quote response missing results for {instrument.ticker}")
+        try:
+            timestamp_ns = int(str(raw["t"]))
+            timestamp = datetime.fromtimestamp(timestamp_ns // 1_000_000_000, UTC).replace(
+                microsecond=(timestamp_ns % 1_000_000_000) // 1_000
+            )
+            return Quote(
+                instrument_id=instrument.instrument_id,
+                bid=Decimal(str(raw["p"])),
+                ask=Decimal(str(raw["P"])),
+                timestamp=timestamp,
+                source=source,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MarketDataError(f"invalid official quote for {instrument.ticker}") from exc
