@@ -112,6 +112,8 @@ class DemoRuntime:
         else:
             self._market_data_provider = None
         self._market_data_provider_name = provider_name if self._market_data_live else "SYNTHETIC"
+        self._max_live_spread_bps = Decimal("100")
+        self._unavailable_symbols: set[str] = set()
         self._asset_catalog: tuple[AssetCandidate, ...] = ()
         self._universe_error: str | None = None
         if self._market_data_live and provider_name == "ALPACA":
@@ -124,7 +126,7 @@ class DemoRuntime:
         self._live_data_error: str | None = None
         if self._market_data_provider is not None:
             try:
-                self.quotes.update(self._market_data_provider.fetch_quotes(self.instruments))
+                self._accept_live_quotes(self._market_data_provider.fetch_quotes(self.instruments))
                 self._live_data_ready = True
                 if not self._quotes_fresh():
                     self._live_data_ready = False
@@ -250,6 +252,7 @@ class DemoRuntime:
                     "catalogAvailable": bool(self._asset_catalog),
                     "candidateCount": len(self._asset_catalog),
                     "error": self._universe_error,
+                    "unavailableSymbols": sorted(self._unavailable_symbols),
                 },
                 "metrics": {
                     "totalEquity": money(equity),
@@ -652,6 +655,7 @@ class DemoRuntime:
                 ),
             )
             for instrument_id in self.instruments
+            if instrument_id not in self._unavailable_symbols
         )
         for instrument_id, quantity in seed_orders:
             if quantity <= Decimal("0"):
@@ -709,7 +713,7 @@ class DemoRuntime:
     def _advance_market(self) -> None:
         if self._market_data_provider is not None:
             fresh_quotes = self._market_data_provider.fetch_quotes(self.instruments)
-            self.quotes.update(fresh_quotes)
+            self._accept_live_quotes(fresh_quotes)
             self._live_data_ready = True
             self._flags["market_data_healthy"] = True
             self._live_data_error = None
@@ -738,10 +742,23 @@ class DemoRuntime:
 
     def _record_prices(self) -> None:
         for instrument_id, quote in self.quotes.items():
+            if instrument_id in self._unavailable_symbols:
+                continue
             history = self._price_history.setdefault(instrument_id, [])
             history.append(quote.midpoint)
             if len(history) > 12:
                 del history[:-12]
+
+    def _accept_live_quotes(self, quotes: dict[str, Quote]) -> None:
+        valid = {
+            instrument_id: quote
+            for instrument_id, quote in quotes.items()
+            if quote.spread_bps <= self._max_live_spread_bps
+        }
+        self._unavailable_symbols = set(self.instruments) - set(valid)
+        if not valid:
+            raise MarketDataError("all live quotes failed spread validation")
+        self.quotes.update(valid)
 
     def _auto_signal(self) -> None:
         """Bounded momentum paper strategy with a hold period and exit rules."""
