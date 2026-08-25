@@ -32,6 +32,12 @@ export interface Dashboard {
     tick: number;
     sessionClosed: boolean;
   };
+  universe: {
+    watchlist: string[];
+    catalogAvailable: boolean;
+    candidateCount: number;
+    error: string | null;
+  };
   metrics: Record<string, string | number>;
   risk: {
     mode: string;

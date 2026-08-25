@@ -43,7 +43,7 @@ from .domain import (
     utc_now,
 )
 from .execution import ExecutionService
-from .market_data import AlpacaMarketDataProvider, MarketDataError, PolygonMarketDataProvider
+from .market_data import AssetCandidate, AlpacaAssetUniverseProvider, AlpacaMarketDataProvider, MarketDataError, PolygonMarketDataProvider
 from .persistence import SQLiteStore
 from .reconciliation import ReconciliationService
 from .risk import RiskEngine
@@ -64,16 +64,22 @@ class DemoRuntime:
         self,
         db_path: str | Path = "artifacts/tradeforge-demo.db",
         auto_interval_seconds: float = 5.0,
-        auto_trade_every_ticks: int = 4,
+        auto_trade_every_ticks: int = 6,
         market_data_mode: str | None = None,
+        auto_min_hold_seconds: float = 300.0,
     ) -> None:
         self._lock = threading.RLock()
         if auto_interval_seconds <= 0:
             raise ValueError("auto_interval_seconds must be positive")
         if auto_trade_every_ticks < 1:
             raise ValueError("auto_trade_every_ticks must be positive")
+        if auto_min_hold_seconds < 0:
+            raise ValueError("auto_min_hold_seconds cannot be negative")
         self._auto_interval_seconds = auto_interval_seconds
         self._auto_trade_every_ticks = auto_trade_every_ticks
+        self._auto_min_hold = timedelta(seconds=auto_min_hold_seconds)
+        self._auto_take_profit_pct = Decimal("1.5")
+        self._auto_stop_loss_pct = Decimal("2.0")
         self._virtual_capital = Decimal(os.getenv("TRADEFORGE_DEMO_CAPITAL_EUR", "1000"))
         if self._virtual_capital <= Decimal("0"):
             raise ValueError("TRADEFORGE_DEMO_CAPITAL_EUR must be positive")
@@ -106,6 +112,13 @@ class DemoRuntime:
         else:
             self._market_data_provider = None
         self._market_data_provider_name = provider_name if self._market_data_live else "SYNTHETIC"
+        self._asset_catalog: tuple[AssetCandidate, ...] = ()
+        self._universe_error: str | None = None
+        if self._market_data_live and provider_name == "ALPACA":
+            try:
+                self._asset_catalog = AlpacaAssetUniverseProvider().fetch_assets()
+            except MarketDataError as exc:
+                self._universe_error = str(exc)
         self._live_quote_max_age = timedelta(seconds=30)
         self._live_data_ready = not self._market_data_live
         self._live_data_error: str | None = None
@@ -178,6 +191,9 @@ class DemoRuntime:
         self._session_closed = False
         self._orders_today = 0
         self._auto_session_id = new_id("auto-session")
+        self._auto_opened_at: dict[str, datetime] = {}
+        self._auto_last_trade_at: dict[str, datetime] = {}
+        self._price_history: dict[str, list[Decimal]] = {instrument_id: [] for instrument_id in self.instruments}
         self._auto_session_start_equity: Decimal | None = None
         self._seed_if_needed()
 
@@ -221,10 +237,19 @@ class DemoRuntime:
                     "strategy": "Demo Trend v1",
                     "intervalSeconds": self._auto_interval_seconds,
                     "tradeEverySeconds": self._auto_interval_seconds * self._auto_trade_every_ticks,
+                    "minHoldSeconds": self._auto_min_hold.total_seconds(),
+                    "takeProfitPct": str(self._auto_take_profit_pct),
+                    "stopLossPct": str(self._auto_stop_loss_pct),
                     "lastAction": self._auto_last_action,
                     "tick": self._auto_tick,
                     "sessionClosed": self._session_closed,
                     "sessionStartEquity": money(self._auto_session_start_equity) if self._auto_session_start_equity is not None else None,
+                },
+                "universe": {
+                    "watchlist": sorted(self.instruments),
+                    "catalogAvailable": bool(self._asset_catalog),
+                    "candidateCount": len(self._asset_catalog),
+                    "error": self._universe_error,
                 },
                 "metrics": {
                     "totalEquity": money(equity),
@@ -278,6 +303,70 @@ class DemoRuntime:
                     {"id": "kill-switch", "label": "Simulate kill switch"},
                 ],
             }
+
+    def search_universe(self, query: str) -> dict[str, Any]:
+        with self._lock:
+            normalized = query.strip().lower()
+            candidates = self._asset_catalog or tuple(
+                AssetCandidate(
+                    symbol=instrument.ticker,
+                    name=instrument.ticker,
+                    exchange=instrument.venue,
+                    asset_class=instrument.asset_class.value,
+                    tradable=instrument.tradable,
+                    fractionable=instrument.quantity_increment < Decimal("1"),
+                )
+                for instrument in self.instruments.values()
+            )
+            matches = [
+                candidate
+                for candidate in candidates
+                if not normalized or normalized in candidate.symbol.lower() or normalized in candidate.name.lower()
+            ][:25]
+            return {
+                "query": query,
+                "liveData": self._market_data_live,
+                "matches": [
+                    {
+                        "symbol": candidate.symbol,
+                        "name": candidate.name,
+                        "exchange": candidate.exchange,
+                        "assetClass": candidate.asset_class,
+                        "fractionable": candidate.fractionable,
+                        "watchlisted": candidate.symbol in self.instruments,
+                    }
+                    for candidate in matches
+                ],
+                "error": self._universe_error,
+            }
+
+    def add_to_watchlist(self, symbol: str) -> dict[str, Any]:
+        with self._lock:
+            symbol = symbol.strip().upper()
+            candidate = next((item for item in self._asset_catalog if item.symbol == symbol), None)
+            if candidate is None:
+                raise ValueError("symbol is not an active official asset candidate")
+            if not candidate.tradable:
+                raise ValueError("asset is not tradable")
+            if symbol not in self.instruments:
+                instrument = Instrument(
+                    instrument_id=symbol,
+                    isin=None,
+                    ticker=symbol,
+                    venue=candidate.exchange or "UNKNOWN",
+                    asset_class=AssetClass.ETF if candidate.asset_class == "us_etf" else AssetClass.STOCK,
+                    quantity_increment=Decimal("0.001") if candidate.fractionable else Decimal("1"),
+                )
+                if self._market_data_provider is None:
+                    raise ValueError("a live market-data provider is required to add a watchlist asset")
+                self.quotes.update(self._market_data_provider.fetch_quotes({symbol: instrument}))
+                self.instruments[symbol] = instrument
+                self.settings = replace(self.settings, allowed_instrument_ids=frozenset((*self.settings.allowed_instrument_ids, symbol)))
+                self.controls.settings = self.settings
+                self.risk.settings = self.settings
+                self._price_history[symbol] = []
+                self._event("WATCHLIST_ASSET_ADDED", {"symbol": symbol, "exchange": candidate.exchange})
+            return self.dashboard()
 
     def pause(self, reason: str = "Operator paused automated entries") -> dict[str, Any]:
         with self._lock:
@@ -626,6 +715,7 @@ class DemoRuntime:
             self._live_data_error = None
             for quote in fresh_quotes.values():
                 self.broker.set_quote(quote)
+            self._record_prices()
             return
         moves = {
             "AAPL": (Decimal("0.06"), Decimal("-0.03"), Decimal("0.04"), Decimal("-0.05")),
@@ -644,57 +734,80 @@ class DemoRuntime:
             )
             self.quotes[instrument_id] = updated
             self.broker.set_quote(updated)
+        self._record_prices()
+
+    def _record_prices(self) -> None:
+        for instrument_id, quote in self.quotes.items():
+            history = self._price_history.setdefault(instrument_id, [])
+            history.append(quote.midpoint)
+            if len(history) > 12:
+                del history[:-12]
 
     def _auto_signal(self) -> None:
-        """Deterministic paper strategy; no model or live market path is used."""
+        """Bounded momentum paper strategy with a hold period and exit rules."""
         positions = self.broker.positions()
+        now = utc_now()
+        for position in positions:
+            self._auto_opened_at.setdefault(position.instrument_id, now)
         if self._auto_tick % self._auto_trade_every_ticks:
             self._auto_last_action = "Market observation completed"
             return
-        _, invested, _, _ = self._portfolio_values()
-        target_exposure = self.owner_limits.max_total_exposure_eur * Decimal("0.98")
-        available_capacity = target_exposure - invested
-        if available_capacity >= Decimal("10") and self.broker.snapshot().cash > Decimal("10"):
-            instrument_id = min(
-                self.instruments,
-                key=lambda item: next(
-                    (position.market_value for position in positions if position.instrument_id == item),
-                    Decimal("0"),
-                ),
-            )
-            notional = min(Decimal("25"), available_capacity, self.broker.snapshot().cash - Decimal("5"))
-            result = self.place_order(
-                instrument_id,
-                "BUY",
-                notional,
-                f"{self._auto_session_id}-entry-{self._auto_tick}-{instrument_id}",
-                strategy_id="demo-trend-v1",
-                reason_code="AUTO_SIGNAL",
-            )
-            self._auto_last_action = f"{instrument_id} entry: {result['decision']}"
-        elif positions:
-            position = positions[(self._auto_tick // self._auto_trade_every_ticks - 1) % len(positions)]
-            notional = min(Decimal("25"), position.market_value)
-            result = self.place_order(
-                position.instrument_id,
-                "SELL",
-                notional,
-                f"{self._auto_session_id}-exit-{self._auto_tick}-{position.instrument_id}",
-                strategy_id="demo-trend-v1",
-                reason_code="AUTO_SIGNAL",
-            )
-            self._auto_last_action = f"{position.instrument_id} exit: {result['decision']}"
-        else:
-            instrument_id = ("AAPL", "MSFT", "SAP")[(self._auto_tick // self._auto_trade_every_ticks) % 3]
-            result = self.place_order(
-                instrument_id,
-                "BUY",
-                Decimal("25"),
-                f"{self._auto_session_id}-entry-{self._auto_tick}-{instrument_id}",
-                strategy_id="demo-trend-v1",
-                reason_code="AUTO_SIGNAL",
-            )
-            self._auto_last_action = f"{instrument_id} entry: {result['decision']}"
+
+        # Exits are driven by a meaningful return, never by a timer alone.
+        for position in positions:
+            opened_at = self._auto_opened_at[position.instrument_id]
+            if now - opened_at < self._auto_min_hold:
+                continue
+            return_pct = position.unrealized_pnl / position.cost_basis * Decimal("100")
+            if return_pct >= self._auto_take_profit_pct or return_pct <= -self._auto_stop_loss_pct:
+                notional = min(Decimal("25"), position.market_value)
+                result = self.place_order(
+                    position.instrument_id,
+                    "SELL",
+                    notional,
+                    f"{self._auto_session_id}-exit-{self._auto_tick}-{position.instrument_id}",
+                    strategy_id="demo-trend-v1",
+                    reason_code="AUTO_TAKE_PROFIT" if return_pct >= self._auto_take_profit_pct else "AUTO_STOP_LOSS",
+                )
+                self._auto_last_trade_at[position.instrument_id] = now
+                self._auto_last_action = f"{position.instrument_id} exit: {result['decision']} ({return_pct:.2f}%)"
+                return
+
+        # Entries require a short momentum history and a meaningful notional.
+        candidate = self._momentum_candidate(positions)
+        if candidate is None or self.broker.snapshot().cash < Decimal("30"):
+            self._auto_last_action = "No qualified signal; holding"
+            return
+        instrument_id, momentum_pct = candidate
+        last_trade = self._auto_last_trade_at.get(instrument_id)
+        if last_trade is not None and now - last_trade < self._auto_min_hold:
+            self._auto_last_action = "Signal cooldown active; holding"
+            return
+        result = self.place_order(
+            instrument_id,
+            "BUY",
+            Decimal("25"),
+            f"{self._auto_session_id}-entry-{self._auto_tick}-{instrument_id}",
+            strategy_id="demo-trend-v1",
+            reason_code="AUTO_MOMENTUM_SIGNAL",
+        )
+        self._auto_last_trade_at[instrument_id] = now
+        self._auto_opened_at.setdefault(instrument_id, now)
+        self._auto_last_action = f"{instrument_id} entry: {result['decision']} (+{momentum_pct:.2f}% momentum)"
+
+    def _momentum_candidate(self, positions) -> tuple[str, Decimal] | None:
+        held = {position.instrument_id for position in positions}
+        candidates: list[tuple[str, Decimal]] = []
+        for instrument_id, history in self._price_history.items():
+            if instrument_id in held or len(history) < 4:
+                continue
+            baseline = history[-4]
+            if baseline <= Decimal("0"):
+                continue
+            momentum = (history[-1] - baseline) / baseline * Decimal("100")
+            if momentum >= Decimal("0.20"):
+                candidates.append((instrument_id, momentum))
+        return max(candidates, key=lambda candidate: candidate[1]) if candidates else None
 
     def _current_quote(self, instrument_id: str) -> Quote:
         quote = self.quotes[instrument_id]

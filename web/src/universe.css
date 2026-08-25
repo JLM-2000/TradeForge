@@ -1,0 +1,14 @@
+.tf-universe { display: grid; grid-template-columns: 1fr minmax(300px, 1fr); gap: 15px; align-items: center; padding: 14px 16px; margin-bottom: 13px; border: 1px solid var(--line); border-radius: 9px; background: rgba(16,26,34,.72); }
+.tf-universe h2 { margin: 5px 0 3px; font-size: 12px; }
+.tf-universe p { margin: 0; color: var(--muted); font-size: 9px; }
+.tf-search { display: flex; gap: 6px; }
+.tf-search input { min-width: 0; flex: 1; padding: 8px 9px; border: 1px solid var(--line); border-radius: 5px; outline: 0; color: var(--text); background: #0a141b; font-size: 10px; }
+.tf-search input:focus { border-color: var(--blue); }
+.tf-search-results { grid-column: 1 / -1; display: grid; gap: 3px; }
+.tf-search-results > div { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.tf-search-results > div > div { flex: 1; }
+.tf-search-results b, .tf-search-results small { display: block; }
+.tf-search-results b { color: var(--text); font: 10px var(--mono); }
+.tf-search-results small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.tf-primary.small { min-height: 25px; padding: 5px 8px; font-size: 8px; }
+@media (max-width: 900px) { .tf-universe { grid-template-columns: 1fr; } }

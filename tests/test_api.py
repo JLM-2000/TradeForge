@@ -114,7 +114,7 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_auto_start_runs_paper_orders_and_pause_stops_worker(self) -> None:
         directory = tempfile.TemporaryDirectory()
-        runtime = DemoRuntime(Path(directory.name) / "auto.db", auto_interval_seconds=0.02, auto_trade_every_ticks=2, market_data_mode="SYNTHETIC")
+        runtime = DemoRuntime(Path(directory.name) / "auto.db", auto_interval_seconds=0.02, auto_trade_every_ticks=2, auto_min_hold_seconds=0, market_data_mode="SYNTHETIC")
         client = TestClient(create_app(runtime))
         try:
             started = client.post("/api/v1/auto/start")
@@ -146,6 +146,13 @@ class DashboardApiTests(unittest.TestCase):
         acknowledged = self.client.post("/api/v1/notifications/acknowledge")
         self.assertEqual(acknowledged.status_code, 200)
         self.assertEqual(acknowledged.json()["unreadNotifications"], 0)
+
+    def test_universe_search_returns_candidates_without_auto_adding_them(self) -> None:
+        response = self.client.get("/api/v1/universe/search?q=AAPL")
+        self.assertEqual(response.status_code, 200)
+        matches = response.json()["matches"]
+        self.assertEqual(matches[0]["symbol"], "AAPL")
+        self.assertTrue(matches[0]["watchlisted"])
 
 
 if __name__ == "__main__":

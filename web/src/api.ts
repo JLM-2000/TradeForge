@@ -30,3 +30,9 @@ export async function postAction<T = Dashboard>(path: string, body?: unknown): P
 export function dashboardFromAction(payload: Dashboard | { dashboard: Dashboard }): Dashboard {
   return "dashboard" in payload ? payload.dashboard : payload;
 }
+
+export async function searchUniverse(query: string): Promise<{ matches: Array<{ symbol: string; name: string; exchange: string; assetClass: string; fractionable: boolean; watchlisted: boolean }>; error: string | null }> {
+  const response = await fetch(apiUrl(`/api/v1/universe/search?q=${encodeURIComponent(query)}`));
+  if (!response.ok) throw new Error(`Universe search failed (${response.status})`);
+  return response.json();
+}

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from .demo_runtime import DemoRuntime
 from .controls import ResumeDenied
 from .env import load_local_env
+from .market_data import MarketDataError
 
 
 class ReasonRequest(BaseModel):
@@ -29,6 +30,10 @@ class DemoOrderRequest(BaseModel):
     side: str = Field(pattern="^(BUY|SELL)$")
     notional: Decimal = Field(gt=Decimal("0"), max_digits=12, decimal_places=4)
     idempotency_key: str | None = Field(default=None, max_length=160)
+
+
+class WatchlistRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
 
 
 def create_app(runtime: DemoRuntime | None = None) -> FastAPI:
@@ -133,6 +138,17 @@ def create_app(runtime: DemoRuntime | None = None) -> FastAPI:
             return runtime.place_order(request.instrument_id, request.side, request.notional, request.idempotency_key)
         except (ValueError, InvalidOperation) as exc:
             raise HTTPException(status_code=400, detail={"code": "ORDER_REQUEST_INVALID", "message": str(exc)}) from exc
+
+    @app.get("/api/v1/universe/search")
+    def search_universe(q: str = "", _: None = Depends(require_owner)):
+        return runtime.search_universe(q)
+
+    @app.post("/api/v1/universe/watchlist")
+    def add_watchlist(request: WatchlistRequest, _: None = Depends(require_owner)):
+        try:
+            return runtime.add_to_watchlist(request.symbol)
+        except (ValueError, MarketDataError) as exc:
+            raise HTTPException(status_code=400, detail={"code": "WATCHLIST_ADD_FAILED", "message": str(exc)}) from exc
 
     @app.websocket("/api/v1/ws")
     async def stream(websocket: WebSocket):

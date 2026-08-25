@@ -163,7 +163,7 @@ class StrategyStatus(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Instrument:
     instrument_id: str
-    isin: str
+    isin: str | None
     ticker: str
     venue: str
     currency: str = "EUR"
@@ -174,7 +174,7 @@ class Instrument:
     def __post_init__(self) -> None:
         if not self.instrument_id.strip() or not self.ticker.strip():
             raise ValueError("instrument_id and ticker are required")
-        if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{10}", self.isin):
+        if self.isin is not None and not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{10}", self.isin):
             raise ValueError("isin must be a 12-character ISO 6166 value")
         if self.currency != self.currency.upper() or len(self.currency) != 3:
             raise ValueError("currency must be a three-letter uppercase code")

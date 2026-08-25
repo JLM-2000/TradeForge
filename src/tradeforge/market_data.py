@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Callable, Mapping, Protocol
@@ -16,6 +17,16 @@ from .domain import Instrument, Quote
 
 class MarketDataError(RuntimeError):
     """Market data cannot be trusted for a new decision."""
+
+
+@dataclass(frozen=True, slots=True)
+class AssetCandidate:
+    symbol: str
+    name: str
+    exchange: str
+    asset_class: str
+    tradable: bool
+    fractionable: bool
 
 
 class MarketDataProvider(Protocol):
@@ -105,6 +116,61 @@ class AlpacaMarketDataProvider:
         if missing:
             raise MarketDataError(f"official market data missing symbols: {', '.join(sorted(missing))}")
         return parsed
+
+
+class AlpacaAssetUniverseProvider:
+    """Official active-asset catalog used for owner search/watchlist selection."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        base_url: str = "https://paper-api.alpaca.markets",
+        timeout_seconds: float = 5.0,
+        request_opener: Callable[..., object] = urlopen,
+    ) -> None:
+        self.api_key = api_key if api_key is not None else os.getenv("ALPACA_API_KEY_ID", "")
+        self.api_secret = api_secret if api_secret is not None else os.getenv("ALPACA_API_SECRET_KEY", "")
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self._request_opener = request_opener
+
+    def fetch_assets(self) -> tuple[AssetCandidate, ...]:
+        if not self.api_key or not self.api_secret:
+            raise MarketDataError("asset universe requires ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY")
+        query = urlencode({"status": "active", "asset_class": "us_equity"})
+        request = Request(
+            f"{self.base_url}/v2/assets?{query}",
+            headers={"APCA-API-KEY-ID": self.api_key, "APCA-API-SECRET-KEY": self.api_secret, "Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            response = self._request_opener(request, timeout=self.timeout_seconds)
+            payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise MarketDataError(f"official asset universe request failed: HTTP {exc.code}") from exc
+        except Exception as exc:
+            raise MarketDataError(f"official asset universe request failed: {type(exc).__name__}") from exc
+        if not isinstance(payload, list):
+            raise MarketDataError("official asset universe response was invalid")
+        assets: list[AssetCandidate] = []
+        for raw in payload:
+            if not isinstance(raw, Mapping) or raw.get("status") != "active" or not raw.get("tradable"):
+                continue
+            symbol = str(raw.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+            assets.append(
+                AssetCandidate(
+                    symbol=symbol,
+                    name=str(raw.get("name", symbol)),
+                    exchange=str(raw.get("exchange", "")),
+                    asset_class=str(raw.get("class", "us_equity")),
+                    tradable=bool(raw.get("tradable")),
+                    fractionable=bool(raw.get("fractionable")),
+                )
+            )
+        return tuple(assets)
 
 
 class PolygonMarketDataProvider:
