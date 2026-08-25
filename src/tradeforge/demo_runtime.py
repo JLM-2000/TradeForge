@@ -106,6 +106,7 @@ class DemoRuntime:
         else:
             self._market_data_provider = None
         self._market_data_provider_name = provider_name if self._market_data_live else "SYNTHETIC"
+        self._live_quote_max_age = timedelta(seconds=30)
         self._live_data_ready = not self._market_data_live
         self._live_data_error: str | None = None
         if self._market_data_provider is not None:
@@ -143,6 +144,7 @@ class DemoRuntime:
             self.risk_configuration,
             self.instruments,
             self.controls,
+            max_quote_age=self._live_quote_max_age if self._market_data_live else timedelta(seconds=5),
         )
         self.broker = PaperBroker(
             self.settings.bot_account_id,
@@ -309,6 +311,16 @@ class DemoRuntime:
 
     def start_auto(self) -> dict[str, Any]:
         with self._lock:
+            if self._market_data_provider is not None:
+                try:
+                    self._advance_market()
+                    if self._market_data_live and self._live_data_ready and not self.broker.positions():
+                        self._seed_if_needed()
+                except MarketDataError as exc:
+                    self._flags["market_data_healthy"] = False
+                    self._live_data_error = str(exc)
+                    self._notify("critical", "Automatic trading unavailable", str(exc))
+                    raise ResumeDenied(("live_market_data_unavailable",)) from exc
             if self._market_data_live and not self._quotes_fresh():
                 self._flags["market_data_healthy"] = False
                 self._flags["stale_prices"] = True
@@ -699,7 +711,7 @@ class DemoRuntime:
     def _quotes_fresh(self) -> bool:
         now = utc_now()
         return bool(self.quotes) and all(
-            quote.timestamp <= now and now - quote.timestamp <= timedelta(seconds=5)
+            quote.timestamp <= now and now - quote.timestamp <= self._live_quote_max_age
             for quote in self.quotes.values()
         )
 

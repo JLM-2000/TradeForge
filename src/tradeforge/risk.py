@@ -200,7 +200,10 @@ class RiskEngine:
 
     @staticmethod
     def _quote_fresh(quote: Quote, now: datetime, max_age: timedelta) -> bool:
-        return quote.timestamp <= now and now - quote.timestamp <= max_age
+        # Provider clocks can lead the application clock by a small amount.
+        # Reject materially future data, but do not reject a valid quote for a
+        # sub-second clock skew.
+        return quote.timestamp <= now + timedelta(seconds=2) and now - quote.timestamp <= max_age
 
     def _reject(self, intent: TradeIntent, checks: dict[str, bool], now: datetime, reason: str) -> RiskDecision:
         return RiskDecision(
