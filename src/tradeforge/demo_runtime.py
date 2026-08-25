@@ -840,9 +840,14 @@ class DemoRuntime:
 
     def _quotes_fresh(self) -> bool:
         now = utc_now()
-        return bool(self.quotes) and all(
+        valid_quotes = {
+            instrument_id: quote
+            for instrument_id, quote in self.quotes.items()
+            if instrument_id not in self._unavailable_symbols
+        }
+        return bool(valid_quotes) and all(
             quote.timestamp <= now + timedelta(seconds=2) and now - quote.timestamp <= self._live_quote_max_age
-            for quote in self.quotes.values()
+            for quote in valid_quotes.values()
         )
 
     def _risk_snapshot(self, instrument_id: str) -> RiskSnapshot:
